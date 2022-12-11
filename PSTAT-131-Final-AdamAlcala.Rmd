@@ -1,0 +1,229 @@
+---
+title: "Making a Baseball Game Prediction Model"
+author: "Adam Alcala"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+#### PSTAT 131 Fall 2022
+## Introduction
+
+This project is designed to create a statistical model that predicts the chances of a Major League Baseball team winning a game. For this project, the team I wanted to test this model with the Los Angeles Dodgers, because my family and I are huge fans of them.
+##### Loading the packages required for the project
+```{r}
+library(tidymodels)
+library(ISLR)
+library(ISLR2)
+library(tidyverse)
+library(glmnet)
+library(corrplot)
+library(ggplot2)
+library(janitor)
+library(dplyr)
+library(stringr)
+library(MASS)
+library(knitr)
+library(visdat)
+tidymodels_prefer()
+```
+
+
+### What is the MLB?
+If you have never heard of the MLB before or just need a quick reminder, here's a brief summary. The MLB or 'Major League Baseball' is a professional baseball organization located in North America. Even though it is only in North America, the MLB is the  It has 30 teams, 29 in the USA and 1 from Canada, which compete every year during the MLB season. This culminates into the World Series near the end of the year, where the best teams of the season compete to be the World Series champion.
+
+![Logo of the MLB](images/mlb-logo.png)
+![Logo for the LA Dodgers](images/dodgers-transparent.png)
+
+### What's the purpose of the model?
+For people not familiar with Baseball, or for those who do not completely immerse themselves in baseball analytics and theory crafting for future baseball games, it might be confusing how one baseball team will perform in the future. If you are rooting for a team, wouldn't it be interesting to find out what it is that makes that team succeed? This is what I want to find out with this project. To see if there is a certain variable or situation that improve a team's chances of winning a game. By the end of this project, I hope to give some insight for fans what indicates better chances of winning an game in the MLB. 
+
+### The Plan
+In this project, I will be using the `'mlb-elo'` data set from fivethirtyeight.com. It contains data from every MLB game since 1871! The data set is available for download at [github](https://github.com/fivethirtyeight/data/tree/master/mlb-elo). To begin, the data will be cleaned and altered to fit better into the model later. After the data has been explored, I can use the different variables in the data set as 'predictor variables' which I will use to predict the chances of winning. Afterwards, I will split the data into training and test sets, create a recipe for the model, and use a 10-fold cross validation. For the models, Logistic Regression, Linear Discriminant Analysis, Quadratic Discriminant Analysis, and Lasso will be used to model the data. In the end, when all the models have been tested, I will use the most effective model on the testing data set to see how accurate my model is. If some of these terms seem a little confusing right now, we will go over each one as we go along.
+
+
+## Exploratory Data Analysis
+
+Once we load in the data, we need to check how it looks starting out. There can be variables that are in a form we cannot use yet, as well as some possible missing data. This is the point of cleaning and manipulating the data before we do anything else with it.
+
+### Data cleaning and Manipulation
+
+Lets begin by loading in the data set from the project github.
+
+```{r}
+library(readr)
+mlb_elo <- read_csv("mlb_elo.csv")
+head(mlb_elo)
+```
+Additionally, we can check the dimensions of the data set as we load it in
+```{r}
+dim(mlb_elo)
+```
+
+
+It looks like the data loaded in just fine. There are 225,897 observations, with 26 different variables. However, this data includes games from all of the teams in the MLB. In order to get data for only the dodgers, we need to change the set a little bit.
+
+```{r}
+dodger_elo <- mlb_elo %>%
+  filter(team1 == 'LAD' | team2 == 'LAD')
+head(dodger_elo,10)
+```
+Now the data set only includes games with the dodgers either in the home  or away teams. How big is the data set now?
+
+```{r}
+dim(dodger_elo)
+```
+There's now only 21,588 observations, which is still a very big dataset. Let's start checking for any inconsistent data. We'll see if any data is missing first.
+```{r}
+vis_miss(dodger_elo)
+```
+
+Looks like the variables `playoff` and some pitcher variables are missing in the data set. Seeing how 98% of `playoff` is missing, it would be safe to get rid of that variable before we fit the data. As for the rest of the missing data, all of the observations in the pitcher variables are at the end of the data set. Since the data is ordered chronologically (as seen with the most recent games being shown in the `head` function), we can focus on the more recent observations. I think that the games from more recent years will have more influence on predicting win chances, since players, coaches, and even the game have all changed since the beginning.
+
+```{r}
+tail(dodger_elo)
+```
+
+From the `date` variable, we can see that the earliest game recorded is from 1884. It would be safe to say that we can discard many of the earlier years of baseball for the model. To simplify it for the model, we can use baseball games starting after 2000.
+
+```{r}
+dodgerRecent_elo <- dodger_elo %>% 
+  filter(season >= 2000)
+head(dodgerRecent_elo)
+```
+Let's make sure it starts at 2010 and see how big the data set is.
+```{r}
+tail(dodgerRecent_elo)
+dim(dodgerRecent_elo)
+```
+It looks like everything is in order. Now there are only 3747 observations in the data set.
+
+### Adding more variables
+
+
+```{r, }
+dodger_wl <- dodgerRecent_elo %>% 
+  mutate(dodger_result = case_when(team1 == 'LAD' & score1 > score2 |
+                                   team2 == 'LAD' & score2 > score1 ~ 0,
+                                   team1 == 'LAD' & score2 > score1 |
+                                   team2 == 'LAD' & score1 > score2~ 1))
+```
+
+This code created our response variable, `dodger_result`, which is 0 if the Dodgers win, and 1 if they lose. I want to also simplify another variable, which is whether or not the Dodgers are at a home or away game. In this variable, 0 means that it's a home game, and 1 means it's an away game.
+
+```{r}
+dodger_wl <- dodger_wl %>% 
+  mutate(h_a = case_when(team1 == 'LAD' ~ 0,
+                         team2 == 'LAD' ~ 1))
+dodger_wl <- dodger_wl %>% 
+  mutate(dodger_rating = case_when(team1 == 'LAD' ~ rating1_pre,
+                                   team2 == 'LAD' ~ rating2_pre))
+
+```
+
+Now with the addition of these two variables, lets check again for any missing data.
+
+```{r}
+vis_miss(dodger_wl)
+```
+### Choosing our predictor variables
+Okay, looks like all of the missing data is within the `playoff` variable. At this point, we can choose the variables that are most important for this project. In order to choose, I wanted to eliminate any variables that didn't have any significance before the game, so things such as a post game elo score or the final score of the game would be pointless in predicting the result of the game before it began. In short, the variables that need to be chosen should be known before a game begins, and isn't completely missing. These are the variables chosen:
+
+* `season` - Year of season
+* `neutral` - If the game was on a neutral site
+* `team1` - Home team
+* `team2` - Away team
+* `elo_prob1` - Home team probability of winning according to ELO rating
+* `elo_prob2` - Away team probability of winning according to ELO rating
+* `rating1_pre` - Home team ELO rating
+* `rating2_pre` - Away team ELO rating
+* `pitcher1` - Name of starting pitcher for home team
+* `pitcher2` - Name of starting pitcher for away team
+* `pitcher1_rgs` - Home starting pitcher's rolling game score before the game
+* `pitcher2_rgs` - Away starting pitcher's rolling game score before the game
+* `pitcher1_adj` - Home starting pitcher's adjustment to their team's rating
+* `pitcher2_adj` - Away starting pitcher's adjustment to their team's rating
+* `rating_prob1` - Home team's win probability with team ratings and starting pitchers
+* `rating_prob2` - Away team's win probability with team ratings and starting pitchers
+* `h_a` - Whether it is a home or away game for the Dodgers
+* `dodger_rating` - Dodgers ELO rating, regardless if they are home or away
+
+### Cleaning our data set
+
+Now that we know our variables, we now want to only include those variables inside the data set. Additionally, we want 'coded' and character values such as `h_a`, `season` and `pitcher1` to be categorical variables, so we will factorize those as well.
+```{r}
+dodger_data <- dodger_wl %>% 
+  select(season, neutral, team1, team2, elo_prob1, elo_prob2, 
+         rating1_pre, rating2_pre, pitcher1, pitcher2, pitcher1_rgs,
+         pitcher2_rgs, pitcher1_adj, pitcher2_adj, rating_prob1, rating_prob2,
+         dodger_result, h_a, dodger_rating)
+dim(dodger_data) #Check how many variables there are
+```
+So now, the data set only has 19 variables, which is 18 predictor variables plus the response variable `dodger_result` . Now we can convert some of the variables to factors:
+```{r}
+dodger_data$season <- as.factor(dodger_data$season)
+dodger_data$neutral <- as.factor(dodger_data$neutral)
+dodger_data$team1 <- as.factor(dodger_data$team1)
+dodger_data$team2 <- as.factor(dodger_data$team2)
+dodger_data$pitcher1 <- as.factor(dodger_data$pitcher1)
+dodger_data$pitcher2 <- as.factor(dodger_data$pitcher2)
+dodger_data$dodger_result <- as.factor(dodger_data$dodger_result)
+dodger_data$h_a <- as.factor(dodger_data$h_a)
+
+#Assigned all variables to be a factor type
+```
+
+### EDA Visuals
+Now that the data is ready, we can make some plots to see the relationship between all of the variables in the data set. 
+
+### Correlation Plot
+
+Let's see how a correlation plot heat map to see the general relationship of variables.
+
+```{r}
+#Correlation Matrix
+dodger_data %>% 
+  select(where(is.numeric)) %>% 
+  cor() %>% 
+  corrplot(type = 'lower', diag = FALSE, method = 'square')
+```
+Looking at the correlation matrix, there is a clear checker-like pattern between variables. This is because of the variables directly opposing each other. For example, take a look at the second last row, where the variable `rating_prob1` is compared to the others. It has a positive relationship with `elo_prob1`, and then a negative relationship with `elo_prob2` at a similar magnitude. The pattern repeats for the rest of the variables down the row. Variables related to the team at place 1 are positively correlated with other variables at place 1, while they are negatively correlated with variables from another team. The same is said for variables about team 2 as well. Basically what I get from this graph is that variables relating to the same team are positively correlated, and variables of opposing teams are negatively correlated with a similar magnitude to the other variable in the pair. Variables such as `pitcher1_adj` and `pitcher2_adj` have no relationship at all, which makes sense. A pitcher's effect on their team shouldn't affect another pitcher's effect on their team. One more thing I want to point out is the positive relationship between `pitcher1_adj` and `pitcher1_rgs` as well as `pitcher2_adj` and `pitcher2_rgs`. There is a positive correlation between the adjustment and rolling game score for a pitcher on a team. What this shows is that as a pitcher's rolling game score increases, so does the effect on the adjustment to their team's overall rating.Basically, it seems that pitchers have a significant role when figuring out a teams overall score.
+
+### Season
+Let's the the Dodger's game result history through the years. We can do this by making a bar plot showing the number of wins and losses each year. For ease of understanding, the blue marks wins while the red marks losses. Overall, we see that the total amount of games played is about the same for all the years, except for 2020, which is understandable considering the high quarantine measures that year. The ratio of wins and losses seems to be about 50:50 in the earlier years, while more recent years skew with more wins than losses.
+
+```{r}
+ggplot(dodger_data, aes(y = season)) +
+  geom_bar(aes(fill = dodger_result)) +
+  scale_fill_manual(values = c('#005A9C','#EF3E42'))
+```
+### Home vs Away
+Next, I want to plot the game history again, but this time comparing the home and away games' win loss rate.
+
+```{r}
+
+ggplot(dodger_data, aes(y = h_a)) +
+  geom_bar(aes(fill = dodger_result)) +
+  scale_fill_manual(values = c('#005A9C','#EF3E42'))
+```
+
+Comparing the bars, it looks like home games have a greater amount of wins compared to away games. Although it doesn't look like much, there is about a 250 game difference between wins and losses. So it seems like the dodgers do have a home field advantage.
+
+### Games vs Rating
+
+I wanted to also see if team rating really showed the strength of the team. If it had a strong reflection of the win loss rate, there would be more wins with a higher ELO rating, less wins with a lower ELO rating.
+
+```{r}
+ ggplot(dodger_data, aes(x = dodger_rating)) +
+  geom_histogram(aes(fill = dodger_result)) +
+  scale_fill_manual(values = c('#005A9C','#EF3E42'))
+```
+
+
+
