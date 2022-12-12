@@ -1,0 +1,18 @@
+Codebook for the Variables used in the Project
+-----| ---------
+season | Year of season
+neutral | Whether game was on a neutral site
+team1 | Abbreviation for home team
+team2 | Abbreviation for away team
+elo_prob1 | Home team's probability of winning according to Elo ratings
+elo_prob2 | Away team's probability of winning according to Elo ratings
+rating1_pre | Home team's rating before the game
+rating2_pre | Away team's rating before the game
+pitcher1_adj | Home starting pitcher's adjustment to their team's rating
+pitcher2_adj | Away starting pitcher's adjustment to their team's rating
+rating_prob1 | Home team's probability of winning according to team ratings and starting pitchers
+rating_prob2 | Away team's probability of winning according to team ratings and starting pitchers
+h_a | Whether it is a home game (0) or an away game (1) for the Dodgers
+dodger_rating | Dodgers ELO rating
+dodger_pitcher| Dodgers Pitcher's rolling game score
+dodger_rating | Response Variable, determines if the game was a win (0) or a loss (1)
